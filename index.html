@@ -111,40 +111,82 @@ const LABEL = {push: 'Push', pull: 'Pull', legs: 'Beine', upper: 'Oberkörper', 
 const SHORT = {push: 'Push', pull: 'Pull', legs: 'Legs', upper: 'Ober', lower: 'Unter', rest: 'Pause'};
 const TYPES = ['push', 'pull', 'legs', 'upper', 'lower'];
 const MODES = {w: 'Gewicht', bw: 'Körpergewicht + Zusatz', r: 'Nur Wiederholungen'};
-const KEY = 'gym.tracker.v2';
+const KEY = 'gym.tracker.v3';
+const OLD_KEYS = ['gym.tracker.v2', 'gym.tracker.v1'];
 
 // mode: w = Hantel/Gerät, bw = Körpergewicht (+ Zusatzgewicht), r = nur Wiederholungen
 const X = (id, name, sets, min, max, weight, rest = 90, mode = 'w', inc = 2.5) => ({id, name, sets, min, max, weight, inc, rest, mode});
 function defaultPlan() {
   return {
-    push: [X('push_bench', 'Bankdrücken', 4, 5, 8, 60, 150), X('push_ohp', 'Kurzhantel-Schulterdrücken', 3, 8, 12, 15), X('push_incl', 'Kurzhantel-Schrägbankdrücken', 3, 8, 12, 20), X('push_lat', 'Seitheben', 3, 12, 15, 7.5), X('push_tri', 'Kurzhantel-Trizeps-Extensions', 3, 10, 15, 15)],
-    pull: [X('pull_chin', 'Klimmzüge', 4, 6, 10, 0, 150, 'bw'), X('pull_row', 'Langhantel-Rudern', 3, 6, 10, 50, 120), X('pull_rfly', 'Reverse Fly', 3, 12, 15, 7.5), X('pull_curl', 'Kurzhantel-Curls', 3, 8, 12, 12.5), X('pull_ham', 'Hammer Curls', 2, 10, 15, 12.5)],
-    legs: [X('legs_squat', 'Kniebeugen', 4, 5, 8, 80, 150), X('legs_rdl', 'Rumänisches Kreuzheben', 3, 6, 10, 70, 120), X('legs_bss', 'Bulgarian Split Squats', 3, 8, 12, 15, 120), X('legs_calf', 'Wadenheben', 4, 10, 15, 40), X('legs_hlr', 'Hanging Leg Raises', 3, 8, 15, 0, 60, 'r')],
-    upper: [X('up_bench', 'Bankdrücken', 3, 8, 10, 55, 120), X('up_chin', 'Klimmzüge', 3, 6, 10, 0, 120, 'bw'), X('up_row', 'Kurzhantel-Rudern', 3, 8, 12, 25), X('up_curl', 'Kurzhantel-Curls', 3, 8, 12, 12.5), X('up_tri', 'Kurzhantel-Trizeps-Extensions', 3, 10, 15, 15)],
-    lower: [X('low_squat', 'Kniebeugen', 3, 8, 10, 70, 120), X('low_bss', 'Bulgarian Split Squats', 3, 8, 12, 15, 120), X('low_rdl', 'Rumänisches Kreuzheben', 3, 8, 10, 70, 120), X('low_calf', 'Wadenheben', 4, 10, 15, 40), X('low_hlr', 'Hanging Leg Raises', 3, 8, 15, 0, 60, 'r')]
+    push: [X('push_bench', 'Bankdrücken', 3, 5, 8, 60, 150), X('push_ohp', 'Schulterdrücken sitzend (Langhantel)', 3, 8, 12, 40, 120), X('push_incl', 'Kurzhantel-Schrägbankdrücken', 3, 8, 12, 17.5), X('push_lat', 'Seitheben', 3, 12, 15, 10), X('push_tri', 'Kurzhantel-Trizeps-Extensions', 3, 10, 15, 17.5)],
+    pull: [X('pull_chin', 'Klimmzüge', 3, 6, 10, 5, 150, 'bw'), X('pull_row', 'Langhantel-Rudern', 3, 6, 10, 50, 120), X('pull_rfly', 'Reverse Fly', 3, 12, 15, 7.5), X('pull_inc', 'Incline Curl (Kurzhantel)', 3, 8, 12, 12.5), X('pull_ham', 'Hammer Curls', 3, 10, 15, 15)],
+    legs: [X('legs_squat', 'Kniebeugen', 3, 5, 8, 62.5, 150), X('legs_sldl', 'Stiff-Legged Deadlift', 3, 6, 10, 62.5, 120), X('legs_sumo', 'Sumo Deadlift', 3, 6, 10, 70, 120), X('legs_calf', 'Wadenheben einbeinig (Kurzhantel)', 3, 10, 15, 20), X('legs_hlr', 'Hanging Leg Raises', 3, 8, 15, 0, 60, 'r')],
+    upper: [X('up_bench', 'Bankdrücken', 3, 8, 10, 60, 120), X('up_chin', 'Klimmzüge', 3, 6, 10, 5, 120, 'bw'), X('up_fly', 'Fly', 3, 10, 15, 12.5), X('up_row', 'Kurzhantel-Rudern', 3, 8, 12, 20), X('up_tri', 'Kurzhantel-Trizeps-Extensions', 3, 10, 15, 17.5)],
+    lower: [X('low_squat', 'Kniebeugen', 3, 8, 10, 60, 120), X('low_bss', 'Bulgarian Split Squats', 3, 8, 12, 15, 120), X('low_rdl', 'Rumänisches Kreuzheben', 3, 8, 10, 60, 120), X('low_calf', 'Wadenheben', 3, 10, 15, 20), X('low_hlr', 'Hanging Leg Raises', 3, 8, 15, 0, 60, 'r')]
   };
+}
+
+// Übungen, die aus dem Plan gewandert sind, aber Verlauf haben
+const RETIRED = {
+  push_ohp_db: {name: 'Schulterdrücken sitzend (Kurzhantel)', min: 8, max: 12, rest: 120, mode: 'w'},
+  legs_rdl: {name: 'Rumänisches Kreuzheben', min: 6, max: 10, rest: 120, mode: 'w'}
+};
+
+// Startdaten: deine letzten Trainings (aus den Screenshots). Reihenfolge stimmt, Tage sind Platzhalter.
+function seedState() {
+  const plan = defaultPlan(), info = {};
+  Object.values(plan).flat().forEach(p => { info[p.id] = p; });
+  Object.assign(info, RETIRED);
+  const bw = 80;
+  const E = (id, ws, reps) => {
+    const p = info[id], arr = Array.isArray(ws) ? ws.slice() : reps.map(() => ws);
+    const e = {exId: id, name: p.name, min: p.min, max: p.max, inc: 2.5, rest: p.rest, mode: p.mode, bw, planSets: 3, weight: Math.max(...arr), reps};
+    if (new Set(arr).size > 1) e.ws = arr;
+    return e;
+  };
+  const D = (d, h) => new Date(2026, 8, d, h, 0).getTime();
+  const T = (type, date, entries) => ({id: uid(), date, type, imp: true, entries});
+  const sessions = [
+    T('upper', D(6, 18), [E('up_bench', 60, [7, 6, 6]), E('up_fly', 10, [13, 12, 10]), E('up_chin', 0, [12, 11, 11])]),
+    T('pull', D(8, 18), [E('pull_ham', 15, [8, 7, 7]), E('pull_inc', 10, [15, 14, 13])]),
+    T('push', D(8, 19), [E('push_tri', 15, [11, 9, 8]), E('push_lat', 10, [12, 11, 10]), E('push_ohp_db', 15, [11, 10, 10])]),
+    T('legs', D(10, 18), [E('legs_rdl', [50, 60, 60], [10, 10, 8]), E('legs_squat', [40, 50, 50], [10, 10, 10])]),
+    T('upper', D(12, 18), [E('up_bench', 60, [8, 7, 6]), E('up_chin', [0, 5, 5], [15, 10, 9]), E('up_fly', [10, 12.5], [15, 9])]),
+    T('pull', D(14, 18), [E('pull_ham', 15, [8]), E('pull_inc', 12.5, [10, 8, 8])]),
+    T('push', D(14, 19), [E('push_tri', 15, [15, 15, 15]), E('push_lat', 10, [10, 10, 11]), E('push_ohp', 25, [8, 8, 8])]),
+    T('pull', D(16, 18), [E('pull_ham', 15, [8, 7, 7]), E('pull_inc', 12.5, [10, 8, 8])]),
+    T('pull', D(18, 18), [E('pull_ham', 15, [9, 7, 7]), E('pull_inc', 12.5, [10, 9, 8])]),
+    T('push', D(18, 19), [E('push_tri', 17.5, [12, 12, 10]), E('push_lat', 10, [11, 12, 12]), E('push_ohp', [40, 40, 25], [10, 9, 8])]),
+    T('legs', D(20, 18), [E('legs_squat', 60, [8, 8, 8]), E('legs_sldl', 60, [10, 10, 10]), E('legs_sumo', 70, [7, 7])])
+  ];
+  sessions.sort((a, b) => a.date - b.date);
+  return {plan, pos: 0, sessions, draft: null, settings: {bw}};
 }
 
 /* ---------- State ---------- */
 let S;
 function load() {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) {
+  let raw = null;
+  try { raw = localStorage.getItem(KEY); } catch (e) {}
+  if (raw) {
+    try {
       const d = JSON.parse(raw);
       if (d && d.plan && Array.isArray(d.sessions) && Number.isInteger(d.pos)) {
         d.settings = Object.assign({bw: 80}, d.settings);
         return d;
       }
-    }
-  } catch (e) {}
-  return {plan: defaultPlan(), pos: 0, sessions: [], draft: null, settings: {bw: 80}};
+    } catch (e) {}
+    try { localStorage.setItem(KEY + '.corrupt', raw); } catch (e) {}
+  }
+  // Erster Start dieser Version: alte Einträge löschen, deine Startdaten laden
+  try { OLD_KEYS.forEach(k => localStorage.removeItem(k)); } catch (e) {}
+  return seedState();
 }
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(S)); }
   catch (e) { toast('⚠️ Speichern fehlgeschlagen!'); }
 }
-S = load();
+S = load(); save();
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
 
 const ui = {tab: 'today', progType: 'push', progEx: null, openSession: null, modal: null};
@@ -152,12 +194,26 @@ const ui = {tab: 'today', progType: 'push', progEx: null, openSession: null, mod
 /* ---------- Domain ---------- */
 // Wiederholungen, die zählen: im laufenden Training nur abgehakte Sätze
 const effReps = e => e.done ? e.reps.map((r, i) => e.done[i] ? r : 0) : e.reps;
-const load1 = e => e.mode === 'r' ? 1 : e.mode === 'bw' ? (e.bw || 0) + e.weight : e.weight;
-const entryVol = e => effReps(e).reduce((a, r) => a + r * load1(e), 0);
+const setW = (e, i) => e.ws && e.ws[i] !== undefined ? e.ws[i] : e.weight;
+const load1 = (e, i) => e.mode === 'r' ? 1 : e.mode === 'bw' ? (e.bw || 0) + setW(e, i) : setW(e, i);
+const entryVol = e => effReps(e).reduce((a, r, i) => a + r * load1(e, i), 0);
 const unit = e => e.mode === 'r' ? 'Wdh.' : 'kg';
 const sessVol = s => s.entries.filter(e => e.mode !== 'r').reduce((a, e) => a + entryVol(e), 0);
 const hitAll = e => { const r = effReps(e); return r.length > 0 && r.every(x => x >= e.max); };
-const wLabel = e => e.mode === 'r' ? 'Körpergewicht' : e.mode === 'bw' ? (e.weight ? 'KG + ' + fmt(e.weight) + ' kg' : 'Körpergewicht') : fmt(e.weight) + ' kg';
+const wLabel = e => {
+  if (e.mode === 'r') return 'Körpergewicht';
+  const vary = e.ws && new Set(e.ws).size > 1;
+  if (e.mode === 'bw') return vary ? e.ws.map(w => w ? '+' + fmt(w) : 'KG').join(' / ') + ' kg' : (e.weight ? 'KG + ' + fmt(e.weight) + ' kg' : 'Körpergewicht');
+  return vary ? e.ws.map(fmt).join(' / ') + ' kg' : fmt(e.weight) + ' kg';
+};
+function exList(type) {
+  const list = S.plan[type].map(p => ({id: p.id, name: p.name, mode: p.mode, plan: p}));
+  const seen = new Set(list.map(x => x.id));
+  S.sessions.filter(s => s.type === type).forEach(s => s.entries.forEach(e => {
+    if (!seen.has(e.exId)) { seen.add(e.exId); list.push({id: e.exId, name: e.name, mode: e.mode, old: true}); }
+  }));
+  return list;
+}
 const lastSession = type => { for (let i = S.sessions.length - 1; i >= 0; i--) if (S.sessions[i].type === type) return S.sessions[i]; return null; };
 const lastEntry = exId => {
   for (let i = S.sessions.length - 1; i >= 0; i--) {
@@ -180,8 +236,7 @@ function ensureDraft(type) {
       entries: S.plan[type].map(p => {
         const pe = lastEntry(p.id);
         // Gleiches Gewicht wie letztes Mal: Wiederholungen von damals vorschlagen, sonst von der unteren Grenze starten
-        const same = pe && pe.mode === p.mode && pe.weight === p.weight;
-        const reps = Array.from({length: p.sets}, (_, i) => same && pe.reps[i] ? Math.min(99, Math.max(pe.reps[i], p.min)) : p.min);
+        const reps = Array.from({length: p.sets}, (_, i) => pe && pe.mode === p.mode && setW(pe, i) === p.weight && pe.reps[i] ? Math.min(99, pe.reps[i]) : p.min);
         return {exId: p.id, name: p.name, min: p.min, max: p.max, inc: p.inc, rest: p.rest, mode: p.mode, bw: S.settings.bw, planSets: p.sets, weight: p.weight, reps, done: reps.map(() => false)};
       })
     };
@@ -259,10 +314,10 @@ function viewProgress() {
     ${last >= 0 ? `<div class="small" style="margin-top:8px">Letztes Training: <b>${fmt(vols[last])} kg</b> ${delta(vols[last], last > 0 ? vols[last - 1] : 0)}</div>` : ''}
     <div class="small mut" style="margin-top:4px">Übungen nur mit Wiederholungen (Hanging Leg Raises) zählen nicht zum kg-Volumen.</div></div>`;
 
-  const exs = S.plan[type];
+  const exs = exList(type);
   if (!exs.some(e => e.id === ui.progEx)) ui.progEx = exs[0] ? exs[0].id : null;
   if (exs.length) {
-    const ec = exs.map(e => `<button class="chip ${e.id === ui.progEx ? 'on' : ''}" data-act="pex" data-id="${e.id}">${esc(e.name)}</button>`).join('');
+    const ec = exs.map(e => `<button class="chip ${e.id === ui.progEx ? 'on' : ''}" data-act="pex" data-id="${e.id}">${esc(e.name)}${e.old ? ' (alt)' : ''}</button>`).join('');
     const hist = sess.map(s => ({s, e: s.entries.find(x => x.exId === ui.progEx)})).filter(x => x.e);
     const cur = exs.find(e => e.id === ui.progEx);
     const u = cur ? unit(cur) : 'kg';
@@ -275,7 +330,8 @@ function viewProgress() {
           return `<tr><td>${dateStr(x.s.date)}</td><td>${wLabel(x.e)}</td><td>${effReps(x.e).join('/')}</td><td class="r">${fmt(v)}${dv === null ? '' : `<br><span class="small ${dv > 0 ? 'up' : dv < 0 ? 'down' : 'flat'}">${dv > 0 ? '+' : ''}${fmt(dv)}</span>`}</td></tr>`;
         }).join('') + '</table>';
     }
-    if (cur) h += `<p class="small mut">Aktuell: ${wLabel(cur)} · Ziel ${cur.sets}×${cur.min === cur.max ? cur.max : cur.min + '–' + cur.max}</p>`;
+    if (cur && cur.plan) h += `<p class="small mut">Aktuell: ${wLabel(cur.plan)} · Ziel ${cur.plan.sets}×${cur.plan.min === cur.plan.max ? cur.plan.max : cur.plan.min + '–' + cur.plan.max}</p>`;
+    else if (cur) h += '<p class="small mut">Nicht mehr im Plan – Verlauf bleibt erhalten.</p>';
     h += '</div>';
   }
 
