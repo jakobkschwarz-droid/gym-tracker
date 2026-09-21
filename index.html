@@ -82,6 +82,10 @@ textarea{height:90px;font-size:12px}
 .trow button{border:0;border-radius:10px;background:#0d2617;color:var(--txt);padding:10px 12px;font-size:14px;font-weight:600}
 #upd{flex:none;width:100%;border:0;background:#166534;color:#fff;font-size:15px;font-weight:700;padding:calc(env(safe-area-inset-top) + 10px) 14px 10px}
 #upd[hidden]{display:none}
+.bar{height:8px;border-radius:99px;background:var(--card2);overflow:hidden;margin:8px 0 6px}
+.bar i{display:block;height:100%;border-radius:99px;background:var(--acc)}
+.bar.mid i{background:var(--warn)}.bar.low i{background:var(--bad)}
+.lift{padding:12px 0;border-top:1px solid var(--line)}
 svg text{fill:var(--mut);font-size:10px}
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center}
 .cal .wd{font-size:11px;color:var(--mut);padding-bottom:2px}
@@ -123,7 +127,7 @@ const LABEL = {push: 'Push', pull: 'Pull', legs: 'Beine', upper: 'Oberkörper', 
 const SHORT = {push: 'Push', pull: 'Pull', legs: 'Legs', upper: 'Ober', lower: 'Unter', rest: 'Pause'};
 const TYPES = ['push', 'pull', 'legs', 'upper', 'lower'];
 const MODES = {w: 'Gewicht', bw: 'Körpergewicht + Zusatz', r: 'Nur Wiederholungen'};
-const APP_V = 8;   // bei jeder Veröffentlichung erhöhen (auch in version.json)
+const APP_V = 9;   // bei jeder Veröffentlichung erhöhen (auch in version.json)
 const KEY = 'gym.tracker.v3';
 const OLD_KEYS = ['gym.tracker.v2', 'gym.tracker.v1'];
 
@@ -391,6 +395,66 @@ function calCard() {
     <div class="small mut" style="margin-top:4px">Tag antippen = Pause abhaken</div></div>`;
 }
 
+// ---------- Stärke-Check ----------
+// Richtwerte (Männer): geschätztes 1-Wdh.-Maximum im Verhältnis zum Körpergewicht: Einsteiger / Anfänger / Mittel / Fortgeschritten / Elite
+const LEVELS = ['Einsteiger', 'Anfänger', 'Mittel', 'Fortgeschritten', 'Elite'];
+const LIFTS = [
+  {key: 'bench', name: 'Bankdrücken', re: /bankdrück/i, not: /schräg|kurzhantel|incline/i, std: [0.5, 0.75, 1.25, 1.75, 2.0]},
+  {key: 'squat', name: 'Kniebeugen', re: /kniebeug|squat/i, not: /bulgarian|split|ausfall/i, std: [0.75, 1.25, 1.5, 2.25, 2.75]},
+  {key: 'dead', name: 'Kreuzheben (Sumo / Stiff-Legged / Rumänisch)', re: /kreuzheb|deadlift/i, std: [1.0, 1.5, 2.0, 2.75, 3.5]},
+  {key: 'ohp', name: 'Schulterdrücken (Langhantel)', re: /schulterdrück|overhead/i, need: /langhantel|barbell/i, std: [0.35, 0.55, 0.8, 1.1, 1.4]},
+  {key: 'pull', name: 'Klimmzüge', re: /klimmz[uü]g|pull-?up/i, std: [1.03, 1.17, 1.37, 1.6, 1.87], bw: true}
+];
+function bestSet(e) {
+  let best = null;
+  effReps(e).forEach((r, i) => {
+    const l = load1(e, i);
+    if (r < 1 || e.mode === 'r' || l <= 0) return;
+    const v = l * (1 + Math.min(r, 20) / 30);   // Epley
+    if (!best || v > best.v) best = {v, r, w: setW(e, i), mode: e.mode};
+  });
+  return best;
+}
+function liftStats(L) {
+  const hits = [];
+  S.sessions.forEach(s => s.entries.forEach(e => {
+    if (L.re.test(e.name) && !(L.not && L.not.test(e.name)) && !(L.need && !L.need.test(e.name))) { const b = bestSet(e); if (b) hits.push({date: s.date, b}); }
+  }));
+  if (!hits.length) return null;
+  const bwNow = latestKg(), recent = [...new Set(hits.map(h => h.date))].sort((a, b) => b - a).slice(0, 3);
+  const cand = hits.filter(h => recent.includes(h.date)).map(h => h.b).sort((a, b) => b.v - a.v)[0];
+  const ratio = cand.v / bwNow, std = L.std;
+  const idx = std.filter(t => ratio >= t).length;                        // 0 = unter Einsteiger, 5 = Elite
+  const lo = idx === 0 ? 0 : std[idx - 1], hi = idx >= 5 ? null : std[idx];
+  const frac = hi === null ? 1 : Math.max(0, Math.min(1, (ratio - lo) / (hi - lo)));
+  return {L, cand, ratio, idx, frac, score: idx + frac, hi, bwNow};
+}
+function strengthCard() {
+  const st = LIFTS.map(liftStats).filter(Boolean).sort((a, b) => b.score - a.score);
+  if (!st.length) return '';
+  const bw = latestKg(), k = st.length >= 5 ? 2 : 1;
+  const names = arr => arr.map(x => x.L.name.split(' (')[0]).join(', ');
+  let h = `<div class="card"><h2>💪 Stärke-Check</h2>`;
+  if (st.length >= 3) {
+    h += `<div style="margin-bottom:6px"><span class="up">Stärken:</span> ${names(st.slice(0, k))}</div><div><span style="color:var(--warn)">Schwachpunkte:</span> ${names(st.slice(-k).reverse())}</div>`;
+  }
+  st.forEach(x => {
+    const {L, cand, ratio, idx, frac, hi} = x, lvl = idx === 0 ? 'Unter Einsteiger' : LEVELS[idx - 1];
+    const cls = idx >= 4 ? '' : idx === 3 ? '' : idx === 2 ? 'mid' : 'low';
+    const set = cand.mode === 'bw' ? (cand.w ? `${cand.r} Wdh. mit KG + ${fmt(cand.w)} kg` : `${cand.r} Wdh. mit Körpergewicht`) : `${fmt(cand.w)} kg × ${cand.r}`;
+    let next = '';
+    if (hi !== null) {
+      const nextName = LEVELS[idx];
+      if (L.bw) next = `Nächstes Level (${nextName}): ca. ${Math.ceil((hi - 1) * 30 - 1e-6)} Wdh. mit Körpergewicht`;
+      else { const t = hi * bw; next = `Nächstes Level (${nextName}): ca. ${fmt(Math.round(t * 10) / 10)} kg (${t - cand.v > 0 ? '+' : ''}${fmt(Math.round((t - cand.v) * 10) / 10)} kg)`; }
+    } else next = 'Höchstes Level erreicht 🎉';
+    h += `<div class="lift"><div class="row"><b>${L.name}</b><div class="sp"></div><span class="tag" style="margin:0">${lvl}</span></div>
+      <div class="small mut">Bestes Set: ${set}${L.bw ? '' : ' → ca. ' + fmt(Math.round(cand.v)) + ' kg (1 Wdh.)'} · ${fmt(Math.round(ratio * 100) / 100)} × Körpergewicht</div>
+      <div class="bar ${cls}"><i style="width:${Math.round(frac * 100)}%"></i></div><div class="small">${next}</div></div>`;
+  });
+  return h + `<p class="small mut" style="margin:10px 0 0">Grobe Schätzung (Epley-Formel) mit Richtwerten für Männer, gerechnet mit deinem letzten Körpergewicht (${fmt(bw)} kg). Nimmst du zu, sinkt das Verhältnis, solange die Gewichte gleich bleiben. Aus den letzten 3 Trainings je Übung.</p></div>`;
+}
+
 function lineChart(points) {
   const pts = points.slice(-16);
   if (pts.length < 2) return '<p class="mut small">Ab zwei Wägungen siehst du hier den Verlauf.</p>';
@@ -429,7 +493,7 @@ function viewProgress() {
   const type = ui.progType;
   const chips = TYPES.map(t => `<button class="chip ${t === type ? 'on' : ''}" data-act="ptype" data-t="${t}">${LABEL[t]}</button>`).join('');
   const sess = S.sessions.filter(s => s.type === type);
-  let h = `<h1>Fortschritt</h1>${weightCard()}<h2 style="margin-top:6px">Training</h2><div class="chips">${chips}</div>`;
+  let h = `<h1>Fortschritt</h1>${strengthCard()}${weightCard()}<h2 style="margin-top:6px">Training</h2><div class="chips">${chips}</div>`;
   const vols = sess.map(sessVol);
   const last = vols.length - 1;
   h += `<div class="card"><h2>Gesamtvolumen ${LABEL[type]}</h2>${chart(sess.map((s, i) => ({label: shortDate(s.date), value: vols[i]})))}
