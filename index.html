@@ -81,6 +81,14 @@ textarea{height:90px;font-size:12px}
 #tlabel{flex:1;font-size:13px;color:#b7e4c7;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .trow button{border:0;border-radius:10px;background:#0d2617;color:var(--txt);padding:10px 12px;font-size:14px;font-weight:600}
 svg text{fill:var(--mut);font-size:10px}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center}
+.cal .wd{font-size:11px;color:var(--mut);padding-bottom:2px}
+.cd{width:100%;max-width:36px;aspect-ratio:1;margin:0 auto;border-radius:50%;border:2px solid transparent;background:var(--card2);color:var(--mut);font-size:13px;font-weight:600;padding:0;display:flex;align-items:center;justify-content:center}
+.cd.t{background:var(--acc);color:#04210f;font-size:16px;font-weight:800}
+.cd.r{background:#2563eb;color:#fff;font-size:16px;font-weight:800}
+.cd.today{border-color:var(--txt)}
+.cd.fut{opacity:.35}
+.navb{flex:none;width:34px;height:34px;border-radius:10px;border:0;background:var(--card2);color:var(--txt);font-size:20px}
 </style>
 </head>
 <body>
@@ -160,7 +168,7 @@ function seedState() {
     T('legs', D(20, 18), [E('legs_squat', 60, [8, 8, 8]), E('legs_sldl', 60, [10, 10, 10]), E('legs_sumo', 70, [7, 7])])
   ];
   sessions.sort((a, b) => a.date - b.date);
-  return {plan, pos: 0, sessions, draft: null, settings: {bw}, weights: [{id: uid(), date: Date.now(), kg: bw}]};
+  return {plan, pos: 0, sessions, draft: null, settings: {bw}, weights: [{id: uid(), date: Date.now(), kg: bw}], rests: []};
 }
 
 /* ---------- State ---------- */
@@ -180,6 +188,7 @@ function load() {
           d.sessions.forEach(s => { if (s.imp) s.entries.forEach(e => { e.bw = 63; }); });
           if (d.draft) d.draft.entries.forEach(e => { e.bw = 63; });
         }
+        if (!Array.isArray(d.rests)) d.rests = [];
         return d;
       }
     } catch (e) {}
@@ -278,7 +287,7 @@ function viewToday() {
   const lw = S.weights[S.weights.length - 1];
   const due = !lw || (Date.now() - lw.date) / 86400000 >= 7;
   let h = `<h1>${type === 'rest' ? 'Pausetag 😴' : LABEL[type]}</h1><div class="strip">${strip}</div>` + (due ? `<div class="card"><b>⚖️ Wiegen fällig</b><div class="small mut">${lw ? 'Zuletzt ' + fmt(lw.kg) + ' kg am ' + dateStr(lw.date) : 'Noch keine Wägung'}</div>
-    <div class="row" style="margin-top:10px"><input id="wi-today" class="winp" inputmode="decimal" placeholder="Gewicht in kg"><button class="btn sm" data-act="wsave" data-inp="wi-today">Eintragen</button></div></div>` : '');
+    <div class="row" style="margin-top:10px"><input id="wi-today" class="winp" inputmode="decimal" placeholder="Gewicht in kg"><button class="btn sm" data-act="wsave" data-inp="wi-today">Eintragen</button></div></div>` : '') + calCard();
   if (type === 'rest') {
     return h + `<div class="card"><p>Heute ist Pause. Erholung gehört zum Training.</p><button class="btn" data-act="restdone">Pause erledigt → nächster Tag</button></div>
       <p class="mut small">Tipp: Oben auf einen anderen Tag tippen, um die Reihenfolge anzupassen.</p>`;
@@ -321,6 +330,39 @@ function chart(points, u = 'kg') {
       <text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle">${esc(p.label)}</text>`;
   }).join('');
   return `<svg viewBox="0 0 ${W} ${H}" width="100%">${bars}</svg>`;
+}
+
+const dayKey = t => { const d = new Date(t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+// Importierte Startdaten haben Platzhalter-Daten und zählen nicht für Kalender und Serie
+function activity() {
+  const t = new Set(), r = new Set();
+  S.sessions.forEach(x => { if (!x.imp) t.add(dayKey(x.date)); });
+  S.rests.forEach(x => r.add(dayKey(x.date)));
+  return {t, r};
+}
+function streak() {
+  const {t, r} = activity(), has = k => t.has(k) || r.has(k);
+  const d = new Date(); d.setHours(12, 0, 0, 0);
+  if (!has(dayKey(d))) d.setDate(d.getDate() - 1);   // heute noch offen: Serie zählt bis gestern
+  let n = 0;
+  while (has(dayKey(d))) { n++; d.setDate(d.getDate() - 1); }
+  return n;
+}
+function calCard() {
+  const now = new Date(), cm = ui.cal || (ui.cal = {y: now.getFullYear(), m: now.getMonth()});
+  const {t, r} = activity(), todayK = dayKey(now);
+  const days = new Date(cm.y, cm.m + 1, 0).getDate(), lead = (new Date(cm.y, cm.m, 1).getDay() + 6) % 7;
+  let cells = '<span></span>'.repeat(lead), nt = 0, nr = 0;
+  for (let d = 1; d <= days; d++) {
+    const k = cm.y + '-' + String(cm.m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+    const isT = t.has(k), isR = !isT && r.has(k);
+    if (isT) nt++; if (isR) nr++;
+    cells += `<button class="cd ${isT ? 't' : isR ? 'r' : ''} ${k === todayK ? 'today' : ''} ${k > todayK ? 'fut' : ''}" data-act="calday" data-k="${k}">${isT || isR ? '✓' : d}</button>`;
+  }
+  const st = streak(), title = new Date(cm.y, cm.m, 1).toLocaleDateString('de-DE', {month: 'long', year: 'numeric'});
+  return `<div class="card"><div class="row" style="margin-bottom:8px;gap:6px"><button class="navb" data-act="calprev">‹</button><b style="font-size:16px;white-space:nowrap">${title}</b><button class="navb" data-act="calnext">›</button><div class="sp"></div><div style="text-align:right"><div style="font-size:22px;font-weight:800">🔥 ${st}</div><div class="small mut" style="white-space:nowrap">in Folge</div></div></div>
+    <div class="cal">${['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map(x => `<div class="wd">${x}</div>`).join('')}${cells}</div>
+    <div class="small mut" style="margin-top:10px"><span style="color:var(--acc)">●</span> Training ${nt} &nbsp; <span style="color:#3b82f6">●</span> Pause ${nr} &nbsp;·&nbsp; Tag antippen = Pause</div></div>`;
 }
 
 function lineChart(points) {
@@ -515,7 +557,23 @@ document.addEventListener('click', ev => {
   const act = b.dataset.act, i = +b.dataset.i, s = +b.dataset.s, d = S.draft;
   switch (act) {
     case 'setpos': if (S.pos !== i) { if (d && d.entries.some(e => e.done.some(Boolean)) && !confirm('Angefangenes Training verwerfen?')) return; S.pos = i; S.draft = null; save(); } break;
-    case 'restdone': S.pos = (S.pos + 1) % CYCLE.length; save(); break;
+    case 'restdone':
+      if (!S.rests.some(x => dayKey(x.date) === dayKey(Date.now()))) S.rests.push({id: uid(), date: Date.now()});
+      S.pos = (S.pos + 1) % CYCLE.length; save(); break;
+    case 'calprev': case 'calnext': {
+      const c = ui.cal, n = new Date(c.y, c.m + (act === 'calprev' ? -1 : 1), 1); ui.cal = {y: n.getFullYear(), m: n.getMonth()}; break;
+    }
+    case 'calday': {
+      const k = b.dataset.k, tk = dayKey(Date.now());
+      if (k > tk) return;
+      if (activity().t.has(k)) {
+        toast(S.sessions.filter(x => !x.imp && dayKey(x.date) === k).map(x => LABEL[x.type] + ' · ' + fmt(sessVol(x)) + ' kg').join('  |  '));
+        return;
+      }
+      if (S.rests.some(x => dayKey(x.date) === k)) S.rests = S.rests.filter(x => dayKey(x.date) !== k);
+      else { const [y, m, d] = k.split('-').map(Number); S.rests.push({id: uid(), date: k === tk ? Date.now() : new Date(y, m - 1, d, 12).getTime()}); }
+      save(); break;
+    }
     case 'skip': if (!confirm('Diesen Tag überspringen? Eingaben gehen verloren.')) return; S.pos = (S.pos + 1) % CYCLE.length; S.draft = null; save(); break;
     case 'w-': d.entries[i].weight = Math.max(0, round025(d.entries[i].weight - d.entries[i].inc)); save(); break;
     case 'w+': d.entries[i].weight = round025(d.entries[i].weight + d.entries[i].inc); save(); break;
@@ -560,7 +618,7 @@ document.addEventListener('click', ev => {
         const d2 = JSON.parse($('#imp').value);
         if (!d2 || !d2.plan || !Array.isArray(d2.sessions)) throw 0;
         if (!confirm('Aktuelle Daten durch das Backup ersetzen?')) return;
-        S = {plan: d2.plan, pos: Number.isInteger(d2.pos) ? d2.pos : 0, sessions: d2.sessions, draft: null, settings: Object.assign({bw: 63}, d2.settings), weights: Array.isArray(d2.weights) && d2.weights.length ? d2.weights : [{id: uid(), date: Date.now(), kg: (d2.settings && d2.settings.bw) || 63}]}; save(); toast('Wiederhergestellt ✓');
+        S = {plan: d2.plan, pos: Number.isInteger(d2.pos) ? d2.pos : 0, sessions: d2.sessions, draft: null, settings: Object.assign({bw: 63}, d2.settings), weights: Array.isArray(d2.weights) && d2.weights.length ? d2.weights : [{id: uid(), date: Date.now(), kg: (d2.settings && d2.settings.bw) || 63}], rests: Array.isArray(d2.rests) ? d2.rests : []}; save(); toast('Wiederhergestellt ✓');
       } catch (e) { toast('Ungültiges Backup'); return; }
       break;
     }
