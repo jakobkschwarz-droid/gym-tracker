@@ -127,7 +127,7 @@ const LABEL = {push: 'Push', pull: 'Pull', legs: 'Beine', upper: 'Oberkörper', 
 const SHORT = {push: 'Push', pull: 'Pull', legs: 'Legs', upper: 'Ober', lower: 'Unter', rest: 'Pause'};
 const TYPES = ['push', 'pull', 'legs', 'upper', 'lower'];
 const MODES = {w: 'Gewicht', bw: 'Körpergewicht + Zusatz', r: 'Nur Wiederholungen'};
-const APP_V = 10;   // bei jeder Veröffentlichung erhöhen (auch in version.json)
+const APP_V = 11;   // bei jeder Veröffentlichung erhöhen (auch in version.json)
 const KEY = 'gym.tracker.v3';
 const OLD_KEYS = ['gym.tracker.v2', 'gym.tracker.v1'];
 
@@ -433,15 +433,29 @@ function valAtP(std, p) {           // Prozent -> nötiger Wert
   let i = 0; while (i < 4 && p >= PA[i + 1]) i++;
   return V[i] + (V[i + 1] - V[i]) * (p - PA[i]) / (PA[i + 1] - PA[i]);
 }
+// Vergleich mit ALLEN Männern: Mischung über die Gewichtsklassen (typische Verteilung, Ø 82 kg, Streuung 13 kg)
+const BWW = BWR.map(b => Math.exp(-0.5 * ((b - 82) / 13) ** 2)), BWWS = BWW.reduce((a, b) => a + b, 0);
+const cmpMode = () => S.settings.cmp === 'bw' ? 'bw' : 'all';
+function pOf(key, v, bw) {
+  if (cmpMode() === 'bw') return pAtVal(stdAt(key, bw), v);
+  return STD[key].reduce((a, row, i) => a + BWW[i] * pAtVal(row, v), 0) / BWWS;
+}
+function valOfP(key, p, bw) {
+  if (cmpMode() === 'bw') return valAtP(stdAt(key, bw), p);
+  let lo = 0, hi = STD[key][BWR.length - 1][4] * 3;
+  for (let k = 0; k < 50; k++) { const m = (lo + hi) / 2; if (pOf(key, m, bw) < p) lo = m; else hi = m; }
+  return (lo + hi) / 2;
+}
 // 6 Ränge mit je 3 Stufen = 18 Stufen (Grenzen in % der übertroffenen Lifter)
-const TIERS = ['Bronze', 'Silber', 'Gold', 'Platin', 'Diamant', 'Elite'], TBND = [0, 15, 35, 60, 80, 95, 100];
+const TIERS = ['Bronze', 'Silber', 'Gold', 'Platin', 'Diamant', 'Elite'];
 const TCOL = ['#cd7f32', '#b4bccb', '#f0b429', '#38bdf8', '#a855f7', '#ec4899'], ROM = ['I', 'II', 'III'];
-const SUB = [];
-TIERS.forEach((n, t) => { for (let k = 0; k < 3; k++) SUB.push({p: TBND[t] + (TBND[t + 1] - TBND[t]) * k / 3, t, label: n + ' ' + ROM[k], color: TCOL[t]}); });
+// Untergrenzen der 18 Stufen in % (Gold I ab 30, Gold II ab 40, Gold III ab 50)
+const SUBB = [0, 5, 10, 15, 20, 25, 30, 40, 50, 60, 67, 73, 80, 85, 90, 95, 97, 99];
+const SUB = SUBB.map((p, i) => ({p, t: Math.floor(i / 3), label: TIERS[Math.floor(i / 3)] + ' ' + ROM[i % 3], color: TCOL[Math.floor(i / 3)]}));
 function rankOf(p) {
   let i = 0; while (i < SUB.length - 1 && p >= SUB[i + 1].p) i++;
-  const r = SUB[i], nx = SUB[i + 1] || null;
-  return {...r, i, nextP: nx ? nx.p : null, frac: nx ? (p - r.p) / (nx.p - r.p) : 1};
+  const r = SUB[i], nx = SUB[i + 1] || null, hi = nx ? nx.p : 100;
+  return {...r, i, nextP: nx ? nx.p : null, frac: Math.max(0, Math.min(1, (p - r.p) / (hi - r.p)))};
 }
 const REG = {chest: 'Brust', shoulders: 'Schultern', back: 'Rücken', biceps: 'Bizeps', triceps: 'Trizeps', quads: 'Oberschenkel (vorne)', hinge: 'Beinrückseite & Gesäß', calves: 'Waden', abs: 'Bauch'};
 const LIFT_DEFS = [
@@ -483,15 +497,15 @@ function liftStat(D, bw) {
   if (!hits.length) return null;
   const recent = [...new Set(hits.map(h => h.date))].sort((a, b) => b - a).slice(0, 3);   // beste Leistung der letzten 3 Trainings
   const cand = hits.filter(h => recent.includes(h.date)).sort((a, b) => b.v - a.v)[0];
-  const std = stdAt(D.key, bw), p = pAtVal(std, cand.v), rk = rankOf(p);
+  const p = pOf(D.key, cand.v, bw), rk = rankOf(p);
   let next = null, rel = Infinity;
   if (rk.nextP !== null) {
-    const tv = valAtP(std, rk.nextP);
+    const tv = valOfP(D.key, rk.nextP, bw);
     rel = tv / cand.v - 1;
     if (D.reps) next = `ca. ${Math.ceil(tv - 1e-6)} Wdh. mit Körpergewicht`;
     else { const w = Math.ceil(tv / (1 + D.ref / 30) / 2.5 - 1e-6) * 2.5; next = `ca. ${fmt(w)} kg × ${D.ref}`; }
   }
-  return {D, cand, p, rk, next, rel, std};
+  return {D, cand, p, rk, next, rel};
 }
 function regionStats(list) {
   const m = {};
@@ -536,22 +550,24 @@ function strengthCard() {
     <div class="row"><div><div class="small mut">GESAMT-RANG</div><div style="font-size:30px;font-weight:800;color:${ov.color}">${ov.label}</div></div><div class="sp"></div><div style="text-align:right"><div class="small mut">SCORE</div><div style="font-size:30px;font-weight:800;color:${ov.color}">${fmt(Math.round(score * 10) / 10)}</div></div></div>
     <div class="bar"><i style="width:${Math.round(ov.frac * 100)}%;background:${ov.color}"></i></div>`;
   if (up) h += `<div class="small" style="margin:10px 0 4px"><span class="mut">Nächster Aufstieg:</span> <b>${up.D.name}</b> ${up.rk.label} → ${SUB[up.rk.i + 1].label}<br><span class="mut">schaffst du ${up.next}, bist du dort</span></div>`;
-  h += `<div style="margin-top:12px">${bodySvg(cols, ui.reg)}</div>
+  const cm = cmpMode();
+  h += `<div class="chips" style="margin:10px 0 0"><button class="chip ${cm === 'all' ? 'on' : ''}" data-act="cmp" data-v="all">Alle Männer</button><button class="chip ${cm === 'bw' ? 'on' : ''}" data-act="cmp" data-v="bw">Gleiches Gewicht (${fmt(bw)} kg)</button></div>
+    <div style="margin-top:4px">${bodySvg(cols, ui.reg)}</div>
     <div class="row small" style="flex-wrap:wrap;gap:4px 10px;justify-content:center;margin:6px 0">${TIERS.map((n, i) => `<span><span style="color:${TCOL[i]}">●</span> ${n}</span>`).join('')}</div>`;
   const sel = ui.reg && REG[ui.reg] ? ui.reg : null, sr = regs.find(r => r.k === sel);
   h += `<div class="small" style="min-height:40px;background:var(--card2);border-radius:12px;padding:10px 12px">` + (!sel ? 'Tippe auf einen Muskel, um Rang und Übungen zu sehen.' :
-    sr ? `<b>${REG[sel]}</b> · ${chip(sr.rk)} · stärker als ca. ${Math.round(sr.p)} % der Lifter<br><span class="mut">${sr.lifts.map(x => `${x.D.name} (${x.rk.label})`).join(', ')}</span>` :
+    sr ? `<b>${REG[sel]}</b> · ${chip(sr.rk)} · stärker als ca. ${Math.round(sr.p)} % der ${cm === 'all' ? 'Männer' : 'Lifter'}<br><span class="mut">${sr.lifts.map(x => `${x.D.name} (${x.rk.label})`).join(', ')}</span>` :
     `<b>${REG[sel]}</b> · noch keine bewertete Übung`) + `</div>`;
   const rows = list.slice().sort((a, b) => b.p - a.p);
   rows.forEach(x => {
     const {D, cand, rk} = x;
     const set = D.reps ? (cand.w ? `${cand.r} Wdh. mit KG + ${fmt(cand.w)} kg` : `${cand.r} Wdh. mit Körpergewicht`) : `${fmt(cand.w)} kg × ${cand.r} → ca. ${fmt(Math.round(cand.v * 10) / 10)} kg (1 Wdh.)`;
     h += `<div class="lift"><div class="row"><b>${D.name}</b><div class="sp"></div>${chip(rk)}</div>
-      <div class="small mut">${set} · stärker als ${Math.round(x.p)} % der Lifter</div>
+      <div class="small mut">${set} · stärker als ${Math.round(x.p)} % der ${cm === 'all' ? 'Männer' : 'Lifter'}</div>
       <div class="bar"><i style="width:${Math.round(rk.frac * 100)}%;background:${rk.color}"></i></div>
       <div class="small">${x.next ? `Nächste Stufe (${SUB[rk.i + 1].label}): ${x.next}` : 'Höchste Stufe erreicht 🎉'}</div></div>`;
   });
-  return h + `<p class="small mut" style="margin:10px 0 0">Vergleich mit Männern von <a href="https://strengthlevel.com" style="color:var(--mut)">Strength Level</a> bei deinem Körpergewicht (${fmt(bw)} kg): Bronze bis 15 %, Silber bis 35 %, Gold bis 60 %, Platin bis 80 %, Diamant bis 95 %, darüber Elite. Jeder Rang hat 3 Stufen. Aus dem besten Satz der letzten 3 Trainings je Übung, 1-Wdh.-Maximum nach Epley. Score = Ø der Muskelgruppen. Nimmst du zu, sinkt der Rang, solange die Gewichte gleich bleiben.</p></div>`;
+  return h + `<p class="small mut" style="margin:10px 0 0">Vergleich mit Männern aus den Daten von <a href="https://strengthlevel.com" style="color:var(--mut)">Strength Level</a>: ${cm === 'all' ? 'alle Männer, egal wie viel sie wiegen (angenommen: Ø 82 kg)' : 'Männer mit deinem Körpergewicht (' + fmt(bw) + ' kg)'}. Stufen nach Prozent der Männer, die du übertriffst: Bronze bis 15 %, Silber bis 30 %, Gold bis 60 % (Gold I ab 30, II ab 40, III ab 50 %), Platin bis 80 %, Diamant bis 95 %, darüber Elite. Aus dem besten Satz der letzten 3 Trainings je Übung, 1-Wdh.-Maximum nach Epley. Score = Ø der Muskelgruppen.</p></div>`;
 }
 
 function lineChart(points) {
@@ -781,6 +797,7 @@ document.addEventListener('click', ev => {
     case 'tstop': T = null; tickTimer(); return;
     case 'finish': finish(); return;
     case 'upd': doUpdate(); return;
+    case 'cmp': S.settings.cmp = b.dataset.v === 'bw' ? 'bw' : 'all'; save(); break;
     case 'reg': ui.reg = ui.reg === b.dataset.r ? null : b.dataset.r; break;
     case 'closemodal': ui.modal = null; break;
     case 'ptype': ui.progType = b.dataset.t; ui.progEx = null; break;
