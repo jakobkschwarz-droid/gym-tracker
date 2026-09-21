@@ -80,6 +80,8 @@ textarea{height:90px;font-size:12px}
 #ttime{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums;min-width:82px}
 #tlabel{flex:1;font-size:13px;color:#b7e4c7;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .trow button{border:0;border-radius:10px;background:#0d2617;color:var(--txt);padding:10px 12px;font-size:14px;font-weight:600}
+#upd{flex:none;width:100%;border:0;background:#166534;color:#fff;font-size:15px;font-weight:700;padding:calc(env(safe-area-inset-top) + 10px) 14px 10px}
+#upd[hidden]{display:none}
 svg text{fill:var(--mut);font-size:10px}
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center}
 .cal .wd{font-size:11px;color:var(--mut);padding-bottom:2px}
@@ -94,6 +96,7 @@ svg text{fill:var(--mut);font-size:10px}
 </head>
 <body>
 <div id="app">
+  <button id="upd" data-act="upd" hidden>🔄 Neue Version verfügbar – hier tippen</button>
   <main id="main"></main>
   <div id="timer" hidden><div id="tbar"></div><div class="trow"><span id="ttime">0:00</span><span id="tlabel"></span><button data-act="tadd" data-n="-15">−15</button><button data-act="tadd" data-n="15">+15</button><button data-act="tstop">✕</button></div></div>
   <nav>
@@ -120,6 +123,7 @@ const LABEL = {push: 'Push', pull: 'Pull', legs: 'Beine', upper: 'Oberkörper', 
 const SHORT = {push: 'Push', pull: 'Pull', legs: 'Legs', upper: 'Ober', lower: 'Unter', rest: 'Pause'};
 const TYPES = ['push', 'pull', 'legs', 'upper', 'lower'];
 const MODES = {w: 'Gewicht', bw: 'Körpergewicht + Zusatz', r: 'Nur Wiederholungen'};
+const APP_V = 8;   // bei jeder Veröffentlichung erhöhen (auch in version.json)
 const KEY = 'gym.tracker.v3';
 const OLD_KEYS = ['gym.tracker.v2', 'gym.tracker.v1'];
 
@@ -492,7 +496,7 @@ function viewPlan() {
   h += `<div class="card"><h2>Backup</h2><p class="small mut">Alle Daten liegen nur auf diesem iPhone. Kopiere ab und zu ein Backup und speichere es z. B. in Notizen.</p>
     <button class="btn sec sm" data-act="export">Backup kopieren</button>
     <textarea id="imp" placeholder="Backup hier einfügen …" style="margin-top:10px"></textarea>
-    <button class="btn sec sm" style="margin-top:8px" data-act="import">Backup wiederherstellen</button></div>`;
+    <button class="btn sec sm" style="margin-top:8px" data-act="import">Backup wiederherstellen</button></div><p class="small mut" style="text-align:center">Version ${APP_V}</p>`;
   return h;
 }
 
@@ -534,7 +538,7 @@ setInterval(tickTimer, 250);
 async function keepAwake() {
   try { if ('wakeLock' in navigator && !wake) { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); } } catch (e) {}
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { tickTimer(); if (S.draft && S.draft.entries.some(e => e.done.some(Boolean))) keepAwake(); } });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { checkUpdate(); tickTimer(); if (S.draft && S.draft.entries.some(e => e.done.some(Boolean))) keepAwake(); } });
 
 /* ---------- Aktionen ---------- */
 function toast(msg) {
@@ -613,6 +617,7 @@ document.addEventListener('click', ev => {
     case 'tadd': if (T) { T.end += (+b.dataset.n) * 1000; T.total = Math.max(T.total, Math.ceil((T.end - Date.now()) / 1000)); T.fired = false; tickTimer(); } return;
     case 'tstop': T = null; tickTimer(); return;
     case 'finish': finish(); return;
+    case 'upd': doUpdate(); return;
     case 'closemodal': ui.modal = null; break;
     case 'ptype': ui.progType = b.dataset.t; ui.progEx = null; break;
     case 'pex': ui.progEx = b.dataset.id; break;
@@ -689,7 +694,21 @@ document.addEventListener('change', ev => {
   }
 });
 
+async function checkUpdate() {
+  try {
+    const j = await (await fetch('version.json?t=' + Date.now(), {cache: 'no-store'})).json();
+    if (j && j.v > APP_V) $('#upd').hidden = false;
+  } catch (e) {}
+}
+async function doUpdate() {
+  try {
+    const rs = await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(r => r.unregister()));
+    const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k)));
+  } catch (e) {}
+  location.replace(location.pathname + '?u=' + Date.now());
+}
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+checkUpdate();
 render();
 </script>
 </body>
