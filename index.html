@@ -137,7 +137,7 @@ function seedState() {
   const plan = defaultPlan(), info = {};
   Object.values(plan).flat().forEach(p => { info[p.id] = p; });
   Object.assign(info, RETIRED);
-  const bw = 80;
+  const bw = 63;
   const E = (id, ws, reps) => {
     const p = info[id], arr = Array.isArray(ws) ? ws.slice() : reps.map(() => ws);
     const e = {exId: id, name: p.name, min: p.min, max: p.max, inc: 2.5, rest: p.rest, mode: p.mode, bw, planSets: 3, weight: Math.max(...arr), reps};
@@ -160,7 +160,7 @@ function seedState() {
     T('legs', D(20, 18), [E('legs_squat', 60, [8, 8, 8]), E('legs_sldl', 60, [10, 10, 10]), E('legs_sumo', 70, [7, 7])])
   ];
   sessions.sort((a, b) => a.date - b.date);
-  return {plan, pos: 0, sessions, draft: null, settings: {bw}};
+  return {plan, pos: 0, sessions, draft: null, settings: {bw}, weights: [{id: uid(), date: Date.now(), kg: bw}]};
 }
 
 /* ---------- State ---------- */
@@ -172,7 +172,14 @@ function load() {
     try {
       const d = JSON.parse(raw);
       if (d && d.plan && Array.isArray(d.sessions) && Number.isInteger(d.pos)) {
-        d.settings = Object.assign({bw: 80}, d.settings);
+        d.settings = Object.assign({bw: 63}, d.settings);
+        if (!Array.isArray(d.weights)) {
+          // Migration: Wägeverlauf einführen, importierte Trainings auf 63 kg umrechnen
+          d.weights = [{id: uid(), date: Date.now(), kg: 63}];
+          d.settings.bw = 63;
+          d.sessions.forEach(s => { if (s.imp) s.entries.forEach(e => { e.bw = 63; }); });
+          if (d.draft) d.draft.entries.forEach(e => { e.bw = 63; });
+        }
         return d;
       }
     } catch (e) {}
@@ -188,6 +195,16 @@ function save() {
 }
 S = load(); save();
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
+
+const latestKg = () => S.weights.length ? S.weights[S.weights.length - 1].kg : S.settings.bw;
+function addWeight(kg) {
+  const day = new Date().toDateString(), ex = S.weights.find(w => new Date(w.date).toDateString() === day);
+  if (ex) { ex.kg = kg; ex.date = Date.now(); } else S.weights.push({id: uid(), date: Date.now(), kg});
+  S.weights.sort((a, b) => a.date - b.date);
+  S.settings.bw = latestKg();
+  invalidateDraft('pull'); invalidateDraft('upper');
+  save();
+}
 
 const ui = {tab: 'today', progType: 'push', progEx: null, openSession: null, modal: null};
 
@@ -258,7 +275,10 @@ function render() {
 function viewToday() {
   const type = CYCLE[S.pos];
   const strip = CYCLE.map((t, i) => `<button data-act="setpos" data-i="${i}" class="${i === S.pos ? 'on' : ''} ${t === 'rest' ? 'rest' : ''}">${SHORT[t]}</button>`).join('');
-  let h = `<h1>${type === 'rest' ? 'Pausetag 😴' : LABEL[type]}</h1><div class="strip">${strip}</div>`;
+  const lw = S.weights[S.weights.length - 1];
+  const due = !lw || (Date.now() - lw.date) / 86400000 >= 7;
+  let h = `<h1>${type === 'rest' ? 'Pausetag 😴' : LABEL[type]}</h1><div class="strip">${strip}</div>` + (due ? `<div class="card"><b>⚖️ Wiegen fällig</b><div class="small mut">${lw ? 'Zuletzt ' + fmt(lw.kg) + ' kg am ' + dateStr(lw.date) : 'Noch keine Wägung'}</div>
+    <div class="row" style="margin-top:10px"><input id="wi-today" class="winp" inputmode="decimal" placeholder="Gewicht in kg"><button class="btn sm" data-act="wsave" data-inp="wi-today">Eintragen</button></div></div>` : '');
   if (type === 'rest') {
     return h + `<div class="card"><p>Heute ist Pause. Erholung gehört zum Training.</p><button class="btn" data-act="restdone">Pause erledigt → nächster Tag</button></div>
       <p class="mut small">Tipp: Oben auf einen anderen Tag tippen, um die Reihenfolge anzupassen.</p>`;
@@ -303,11 +323,45 @@ function chart(points, u = 'kg') {
   return `<svg viewBox="0 0 ${W} ${H}" width="100%">${bars}</svg>`;
 }
 
+function lineChart(points) {
+  const pts = points.slice(-16);
+  if (pts.length < 2) return '<p class="mut small">Ab zwei Wägungen siehst du hier den Verlauf.</p>';
+  const W = 320, H = 150, pl = 30, pr = 12, pt = 16, pb = 24;
+  const vals = pts.map(p => p.value);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < 1) { lo -= .5; hi += .5; }
+  const pad = (hi - lo) * .2, a = lo - pad, b = hi + pad;
+  const x = i => pl + (W - pl - pr) * i / (pts.length - 1), y = v => pt + (H - pt - pb) * (1 - (v - a) / (b - a));
+  const line = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join('');
+  const dots = pts.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="${i === pts.length - 1 ? 4.5 : 3}" fill="${i === pts.length - 1 ? '#4ade80' : '#3b4252'}"/>`).join('');
+  const xl = [0, Math.floor((pts.length - 1) / 2), pts.length - 1].filter((v, i, arr) => arr.indexOf(v) === i).map(i => `<text x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle">${esc(pts[i].label)}</text>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%"><path d="${line}" fill="none" stroke="#4ade80" stroke-width="2" stroke-linejoin="round"/>${dots}
+    <text x="${pl - 4}" y="${y(hi) + 3}" text-anchor="end">${fmt(hi)}</text><text x="${pl - 4}" y="${y(lo) + 3}" text-anchor="end">${fmt(lo)}</text>${xl}</svg>`;
+}
+function weightCard() {
+  const w = S.weights, last = w[w.length - 1], prev = w[w.length - 2];
+  let stats = '';
+  if (last) {
+    const d1 = prev ? last.kg - prev.kg : null;
+    const win = w.filter(x => last.date - x.date <= 28 * 86400000), first = win[0];
+    const weeks = first ? (last.date - first.date) / (7 * 86400000) : 0;
+    const perWeek = weeks >= 1.5 ? (last.kg - first.kg) / weeks : null;
+    stats = `<div class="row" style="margin-bottom:6px"><div><div style="font-size:30px;font-weight:800">${fmt(last.kg)} kg</div><div class="small mut">${dateStr(last.date)}</div></div><div class="sp"></div>
+      <div class="small" style="text-align:right">${d1 === null ? '' : `<div class="${d1 > 0 ? 'up' : d1 < 0 ? 'down' : 'flat'}">${d1 > 0 ? '▲ +' : d1 < 0 ? '▼ ' : '＝ '}${fmt(d1)} kg zur letzten Wägung</div>`}
+      ${perWeek === null ? '' : `<div class="mut">Ø ${perWeek > 0 ? '+' : ''}${fmt(Math.round(perWeek * 100) / 100)} kg pro Woche (4 Wochen)</div>`}${w.length > 1 ? `<div class="mut">seit Start ${last.kg - w[0].kg > 0 ? '+' : ''}${fmt(last.kg - w[0].kg)} kg</div>` : ''}</div></div>`;
+  }
+  const rows = w.slice(-6).reverse().map(x => `<div class="row small" style="padding:4px 0"><span>${dateStr(x.date)}</span><span class="sp"></span><b>${fmt(x.kg)} kg</b><button class="link" style="padding:2px 8px" data-act="wdel" data-id="${x.id}">✕</button></div>`).join('');
+  return `<div class="card"><h2>⚖️ Körpergewicht</h2>${stats}${lineChart(w.map(x => ({label: shortDate(x.date), value: x.kg})))}
+    <div class="row" style="margin-top:12px"><input id="wi-prog" class="winp" inputmode="decimal" placeholder="Gewicht in kg"><button class="btn sm" data-act="wsave" data-inp="wi-prog">Eintragen</button></div>
+    <p class="small mut" style="margin:8px 0 0">Beim Zunehmen sind etwa 0,25–0,5 kg pro Woche ein guter Rahmen. Wiege dich möglichst immer am gleichen Tag, morgens nüchtern.</p>
+    ${rows ? `<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">${rows}</div>` : ''}</div>`;
+}
+
 function viewProgress() {
   const type = ui.progType;
   const chips = TYPES.map(t => `<button class="chip ${t === type ? 'on' : ''}" data-act="ptype" data-t="${t}">${LABEL[t]}</button>`).join('');
   const sess = S.sessions.filter(s => s.type === type);
-  let h = `<h1>Fortschritt</h1><div class="chips">${chips}</div>`;
+  let h = `<h1>Fortschritt</h1>${weightCard()}<h2 style="margin-top:6px">Training</h2><div class="chips">${chips}</div>`;
   const vols = sess.map(sessVol);
   const last = vols.length - 1;
   h += `<div class="card"><h2>Gesamtvolumen ${LABEL[type]}</h2>${chart(sess.map((s, i) => ({label: shortDate(s.date), value: vols[i]})))}
@@ -351,8 +405,7 @@ function viewProgress() {
 }
 
 function viewPlan() {
-  let h = `<h1>Plan</h1><p class="mut small">Ablauf: Push → Pull → Beine → Pause → Oberkörper → Unterkörper → Pause → wieder von vorn.<br>Steigerung: Schaffst du in <b>allen Sätzen die obere Wdh.-Grenze</b>, steigt das Gewicht um den Schritt. Vorher bleibt es.</p>
-    <div class="card"><h2>Dein Körpergewicht</h2><div class="f"><input inputmode="decimal" data-set="bw" value="${fmt(S.settings.bw)}"></div><p class="small mut" style="margin-bottom:0">Wird für das Volumen bei Klimmzügen (Körpergewicht + Zusatz) gebraucht.</p></div>`;
+  let h = `<h1>Plan</h1><p class="mut small">Ablauf: Push → Pull → Beine → Pause → Oberkörper → Unterkörper → Pause → wieder von vorn.<br>Steigerung: Schaffst du in <b>allen Sätzen die obere Wdh.-Grenze</b>, steigt das Gewicht um den Schritt. Vorher bleibt es.</p>`;
   TYPES.forEach(t => {
     h += `<div class="card"><h2>${LABEL[t]}</h2>`;
     S.plan[t].forEach((e, i) => {
@@ -484,6 +537,12 @@ document.addEventListener('click', ev => {
     case 'pex': ui.progEx = b.dataset.id; break;
     case 'opens': ui.openSession = ui.openSession === b.dataset.id ? null : b.dataset.id; break;
     case 'dels': if (!confirm('Dieses Training endgültig löschen?')) return; S.sessions = S.sessions.filter(x => x.id !== b.dataset.id); ui.openSession = null; save(); break;
+    case 'wsave': {
+      const inp = document.getElementById(b.dataset.inp), v = num(inp ? inp.value : '');
+      if (!isFinite(v) || v < 30 || v > 250) { toast('Bitte Gewicht in kg eingeben'); return; }
+      addWeight(Math.round(v * 10) / 10); toast('Gespeichert ✓'); break;
+    }
+    case 'wdel': if (!confirm('Diese Wägung löschen?')) return; S.weights = S.weights.filter(w => w.id !== b.dataset.id); S.settings.bw = latestKg(); save(); break;
     case 'padd': S.plan[b.dataset.t].push(X('x_' + uid(), 'Neue Übung', 3, 8, 12, 20)); invalidateDraft(b.dataset.t); save(); break;
     case 'pdel': if (!confirm('Übung aus dem Plan entfernen? (Bisherige Trainings bleiben gespeichert)')) return; S.plan[b.dataset.t].splice(i, 1); invalidateDraft(b.dataset.t); save(); break;
     case 'pmove': {
@@ -501,7 +560,7 @@ document.addEventListener('click', ev => {
         const d2 = JSON.parse($('#imp').value);
         if (!d2 || !d2.plan || !Array.isArray(d2.sessions)) throw 0;
         if (!confirm('Aktuelle Daten durch das Backup ersetzen?')) return;
-        S = {plan: d2.plan, pos: Number.isInteger(d2.pos) ? d2.pos : 0, sessions: d2.sessions, draft: null, settings: Object.assign({bw: 80}, d2.settings)}; save(); toast('Wiederhergestellt ✓');
+        S = {plan: d2.plan, pos: Number.isInteger(d2.pos) ? d2.pos : 0, sessions: d2.sessions, draft: null, settings: Object.assign({bw: 63}, d2.settings), weights: Array.isArray(d2.weights) && d2.weights.length ? d2.weights : [{id: uid(), date: Date.now(), kg: (d2.settings && d2.settings.bw) || 63}]}; save(); toast('Wiederhergestellt ✓');
       } catch (e) { toast('Ungültiges Backup'); return; }
       break;
     }
@@ -515,11 +574,6 @@ document.addEventListener('change', ev => {
   if (t.dataset.act === 'winp') {
     const v = num(t.value);
     if (isFinite(v) && v >= 0) { S.draft.entries[+t.dataset.i].weight = round025(v); save(); }
-    render(); return;
-  }
-  if (t.dataset.set === 'bw') {
-    const v = num(t.value);
-    if (isFinite(v) && v > 0) { S.settings.bw = v; invalidateDraft('pull'); invalidateDraft('upper'); save(); }
     render(); return;
   }
   if (t.dataset.plan) {
