@@ -127,7 +127,7 @@ const LABEL = {push: 'Push', pull: 'Pull', legs: 'Beine', upper: 'Oberkörper', 
 const SHORT = {push: 'Push', pull: 'Pull', legs: 'Legs', upper: 'Ober', lower: 'Unter', rest: 'Pause'};
 const TYPES = ['push', 'pull', 'legs', 'upper', 'lower'];
 const MODES = {w: 'Gewicht', bw: 'Körpergewicht + Zusatz', r: 'Nur Wiederholungen'};
-const APP_V = 12;   // bei jeder Veröffentlichung erhöhen (auch in version.json)
+const APP_V = 13;   // bei jeder Veröffentlichung erhöhen (auch in version.json)
 const KEY = 'gym.tracker.v3';
 const OLD_KEYS = ['gym.tracker.v2', 'gym.tracker.v1'];
 
@@ -377,6 +377,21 @@ function weekStreak() {
   while (has(m)) { n++; m.setDate(m.getDate() - 7); }
   return n;
 }
+function dayModal(k) {
+  const list = S.sessions.filter(x => dayKey(x.date) === k);
+  const [y, mo, d] = k.split('-').map(Number);
+  const label = new Date(y, mo - 1, d).toLocaleDateString('de-DE', {weekday: 'long', day: '2-digit', month: '2-digit', year: '2-digit'});
+  const isRest = S.rests.some(x => dayKey(x.date) === k);
+  let body;
+  if (list.length) {
+    body = list.map(s => `<div class="sess"><div class="row"><div><b>${esc(LABEL[s.type])}</b><div class="small mut">${fmt(sessVol(s))} kg</div></div><div class="sp"></div><button class="btn sm danger" data-act="calDel" data-id="${s.id}" data-k="${k}">🗑 Löschen</button></div></div>`).join('');
+  } else {
+    body = `<p class="small mut">Kein Training mehr an diesem Tag.</p>` + (isRest
+      ? `<p class="small up">😴 Als Pause markiert.</p>`
+      : `<button class="btn" data-act="calRest" data-k="${k}">😴 Als Pause markieren</button>`);
+  }
+  return `<div class="modal"><div class="sheet"><div class="row"><h2 style="margin:0;text-transform:capitalize">${esc(label)}</h2><div class="sp"></div><button class="link" data-act="closemodal">Schließen</button></div>${body}</div></div>`;
+}
 function calCard() {
   const now = new Date(), cm = ui.cal || (ui.cal = {y: now.getFullYear(), m: now.getMonth()});
   const {t, r} = activity(), todayK = dayKey(now);
@@ -392,7 +407,7 @@ function calCard() {
   return `<div class="card"><div class="row" style="margin-bottom:8px;gap:6px"><button class="navb" data-act="calprev">‹</button><b style="font-size:16px;white-space:nowrap">${title}</b><button class="navb" data-act="calnext">›</button><div class="sp"></div><div style="text-align:right"><div style="font-size:22px;font-weight:800">🔥 ${st}</div><div class="small mut" style="white-space:nowrap">in Folge</div></div></div>
     <div class="cal">${['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map(x => `<div class="wd">${x}</div>`).join('')}${cells}</div>
     <div class="small mut" style="margin-top:10px"><span style="color:var(--acc)">●</span> Training ${nt} &nbsp; <span style="color:#3b82f6">●</span> Pause ${nr} &nbsp;·&nbsp; 📅 ${ws} ${ws === 1 ? 'Woche' : 'Wochen'} in Folge</div>
-    <div class="small mut" style="margin-top:4px">Tag antippen = Pause abhaken</div></div>`;
+    <div class="small mut" style="margin-top:4px">Tag antippen: Training ansehen/löschen, oder Pause abhaken</div></div>`;
 }
 
 // ---------- Stärke-Check ----------
@@ -665,7 +680,7 @@ function viewProgress() {
   sess.slice().reverse().forEach(s => {
     const idx = S.sessions.indexOf(s), open = ui.openSession === s.id;
     const prevS = (() => { for (let i = idx - 1; i >= 0; i--) if (S.sessions[i].type === s.type) return S.sessions[i]; return null; })();
-    h += `<div class="sess"><div class="row" data-act="opens" data-id="${s.id}" style="cursor:pointer"><div><b>${dateStr(s.date)}</b><div class="small mut">${fmt(sessVol(s))} kg</div></div><div class="sp"></div><div class="small" style="text-align:right">${delta(sessVol(s), prevS ? sessVol(prevS) : 0)}</div></div>`;
+    h += `<div class="sess"><div class="row" data-act="opens" data-id="${s.id}" style="cursor:pointer"><div><b>${dateStr(s.date)}</b><div class="small mut">${fmt(sessVol(s))} kg</div></div><div class="sp"></div><div class="small" style="text-align:right">${delta(sessVol(s), prevS ? sessVol(prevS) : 0)}</div><button class="link" style="padding:4px 0 4px 10px;font-size:17px;text-decoration:none" data-act="dels" data-id="${s.id}" title="Löschen">🗑</button></div>`;
     if (open) {
       h += `<div class="row" style="margin-top:10px"><span class="small mut">Datum</span><input type="date" class="dinp" data-act="sdate" data-id="${s.id}" value="${dayKey(s.date)}" max="${dayKey(Date.now())}"></div>`;
       h += '<div style="margin-top:8px">' + s.entries.map(e => `<div class="small" style="padding:3px 0">${esc(e.name)}: ${wLabel(e)} · ${effReps(e).join('/')} · <b>${fmt(entryVol(e))} ${unit(e)}</b></div>`).join('') +
@@ -796,13 +811,22 @@ document.addEventListener('click', ev => {
     case 'calday': {
       const k = b.dataset.k, tk = dayKey(Date.now());
       if (k > tk) return;
-      if (activity().t.has(k)) {
-        toast(S.sessions.filter(x => dayKey(x.date) === k).map(x => LABEL[x.type] + ' · ' + fmt(sessVol(x)) + ' kg').join('  |  '));
-        return;
-      }
+      if (activity().t.has(k)) { ui.modal = dayModal(k); break; }
       if (S.rests.some(x => dayKey(x.date) === k)) S.rests = S.rests.filter(x => dayKey(x.date) !== k);
       else { const [y, m, d] = k.split('-').map(Number); S.rests.push({id: uid(), date: k === tk ? Date.now() : new Date(y, m - 1, d, 12).getTime()}); }
       save(); break;
+    }
+    case 'calDel': {
+      if (!confirm('Dieses Training endgültig löschen?')) return;
+      S.sessions = S.sessions.filter(x => x.id !== b.dataset.id);
+      ui.openSession = null; save();
+      ui.modal = dayModal(b.dataset.k); break;
+    }
+    case 'calRest': {
+      const k = b.dataset.k, tk = dayKey(Date.now());
+      if (activity().t.has(k)) return;
+      if (!S.rests.some(x => dayKey(x.date) === k)) { const [y, m, d] = k.split('-').map(Number); S.rests.push({id: uid(), date: k === tk ? Date.now() : new Date(y, m - 1, d, 12).getTime()}); save(); }
+      ui.modal = null; toast('Als Pause markiert ✓'); break;
     }
     case 'skip': if (!confirm('Diesen Tag überspringen? Eingaben gehen verloren.')) return; S.pos = (S.pos + 1) % CYCLE.length; S.draft = null; save(); break;
     case 'w-': d.entries[i].weight = Math.max(0, round025(d.entries[i].weight - d.entries[i].inc)); save(); break;
